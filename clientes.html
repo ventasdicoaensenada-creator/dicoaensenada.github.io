@@ -1,21 +1,21 @@
 <!DOCTYPE html>
-  <html lang="es" class="h-full">
-    <link rel="manifest" href="manifest.json">
-  <meta name="theme-color" content="#1a2744">
-<link rel="apple-touch-icon" href="icon-192.png">
 <head>
-  <script>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" sizes="192x192" href="icon-192.png">
+<link rel="apple-touch-icon" sizes="512x512" href="icon-512.png">
+<meta name="theme-color" content="#1a2744">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="DICOA">
+
+<script>
+  // Registrar Service Worker (para offline)
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js');
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('/sw.js');
+    });
   }
 </script>
-  <meta charset="UTF-8">
-  <!-- ESTA LÍNEA ES LA CLAVE -->
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Clientes - DICOA</title>
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%231a2744'/><text x='50' y='65' font-size='50' text-anchor='middle' fill='white'>D</text></svg>">
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
     html, body { height: 100%; margin: 0; }
     body { 
       font-family: system-ui, -apple-system, sans-serif; 
