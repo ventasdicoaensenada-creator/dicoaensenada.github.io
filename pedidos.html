@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="es" class="h-full">
+  <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1a2744">
+  <link rel="apple-touch-icon" href="icon-192.png">
+<head>
+  <script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js');
+  }
+</script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pedidos - DICOA</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%231a2744'/><text x='50' y='65' font-size='50' text-anchor='middle' fill='white'>D</text></svg>">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; background-color: #1a2744; min-height: 100vh; }
+    .spinner { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body class="min-h-screen text-white">
+
+  <div id="app" class="pb-32">
+    <div class="flex items-center justify-center min-h-screen">
+      <div class="text-center">
+        <div class="w-16 h-16 border-4 border-white border-t-transparent rounded-full spinner mx-auto mb-6"></div>
+        <p class="text-xl">Cargando pedidos...</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SHEET_API = 'https://sheetdb.io/api/v1/m2kpg76ucwvd0?sheet=Pedidos';
+    let pedidos = [];
+    let pedidoEditando = null;
+
+    async function cargarPedidos() {
+      try {
+        const res = await fetch(SHEET_API);
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+
+        pedidos = data.map(p => ({
+          numero: p.numero || '',
+          cliente: p.cliente || '',
+          total: parseFloat(p.total) || 0,
+          moneda: p.moneda || 'Pesos Mexicanos',
+          nombre_agente: p.nombre_agente || '',
+          orden_compra: p.orden_compra || '',
+          total_unidades: parseInt(p.total_unidades) || 0,
+          unidades_pendientes: parseInt(p.unidades_pendientes) || 0,
+          fecha: p.fecha || '',
+          fecha_llegada: p.fecha_llegada || '',
+          estado: p.estado || 'pendiente',
+          comentarios: p.comentarios || ''
+        })).sort((a, b) => b.numero - a.numero);
+
+        render();
+      } catch (err) {
+        document.getElementById('app').innerHTML = `
+          <div class="flex items-center justify-center min-h-screen text-center px-6">
+            <div>
+              <p class="text-red-400 text-xl mb-6">Error de conexión</p>
+              <button onclick="cargarPedidos()" class="w-full py-5 bg-cyan-600 hover:bg-cyan-500 rounded-2xl font-black text-lg">
+                Reintentar
+              </button>
+            </div>
+          </div>`;
+      }
+    }
+
+    function render() {
+      const pendientes = pedidos.filter(p => p.estado.toLowerCase() === 'pendiente');
+      const totalPendientes = pendientes.reduce((s, p) => s + p.unidades_pendientes, 0);
+
+      const tarjetas = pedidos.length === 0
+        ? `<div class="text-center py-20 text-gray-400 text-xl">No hay pedidos registrados</div>`
+        : pedidos.map(p => {
+            const esPendiente = p.estado.toLowerCase() === 'pendiente';
+            const simboloMoneda = /d[oó]lar(es)?/i.test(p.moneda) ? 'USD' : 'MXN';
+
+            return `
+              <div class="bg-white/10 rounded-3xl p-6 border ${esPendiente ? 'border-red-500/50' : 'border-white/10'} shadow-xl">
+                <div class="flex justify-between items-start mb-4">
+                  <div class="flex-1">
+                    <h3 class="text-2xl font-black mb-1">#${p.numero} - ${p.cliente}</h3>
+                    <p class="text-cyan-300 text-lg mb-2">${p.orden_compra || 'Sin OC'}</p>
+                    <div class="flex flex-wrap gap-3 text-sm">
+                      <span class="px-3 py-1 bg-cyan-900/50 rounded-full">${simboloMoneda} ${p.total.toLocaleString('es-MX', {minimumFractionDigits: 2})}</span>
+                      <span class="px-3 py-1 ${esPendiente ? 'bg-red-600/50' : 'bg-green-600/50'} rounded-full font-bold">
+                        ${p.estado.toUpperCase()}
+                      </span>
+                    </div>
+                  </div>
+                  <button onclick="editarPedido(${JSON.stringify(p).replace(/'/g, "&#39;")})" 
+                    class="ml-4 p-3 bg-yellow-600/50 hover:bg-yellow-600 rounded-2xl shadow-lg transition">
+                    <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>
+                    </svg>
+                  </button>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <p class="text-gray-400 text-sm">Unidades totales</p>
+                    <p class="text-3xl font-bold">${p.total_unidades}</p>
+                  </div>
+                  <div>
+                    <p class="text-gray-400 text-sm">Pendientes</p>
+                    <p class="text-4xl font-black ${p.unidades_pendientes > 0 ? 'text-red-400' : 'text-green-400'}">${p.unidades_pendientes}</p>
+                  </div>
+                </div>
+
+                <div class="text-sm text-gray-400 space-y-1">
+                  <p>Fecha pedido: ${p.fecha || 'No definida'}</p>
+                  <p>Fecha llegada: ${p.fecha_llegada || 'No definida'}</p>
+                  ${p.comentarios ? `<p class="text-yellow-300 mt-3 text-base">Nota: ${p.comentarios}</p>` : ''}
+                </div>
+              </div>
+            `;
+          }).join('');
+
+      document.getElementById('app').innerHTML = `
+        <!-- Header fijo -->
+        <div class="fixed top-0 left-0 right-0 bg-slate-900/95 backdrop-blur-xl border-b border-white/10 z-50">
+          <div class="p-4 flex items-center justify-between">
+            <a href="index.html" class="flex items-center gap-3">
+              <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M15 19l-7-7 7-7"/>
+              </svg>
+            </a>
+            <h1 class="text-2xl font-black">Pedidos</h1>
+            <div class="text-cyan-300 font-bold">${pedidos.length}</div>
+          </div>
+        </div>
+
+        <div class="pt-24 px-4">
+          <!-- Resumen -->
+          <div class="bg-white/10 rounded-3xl p-6 mb-8 border ${totalPendientes > 0 ? 'border-red-500/50' : 'border-white/10'} text-center">
+            <p class="text-gray-400 text-lg mb-2">Unidades pendientes totales</p>
+            <p class="text-6xl font-black ${totalPendientes > 0 ? 'text-red-400' : 'text-green-400'}">${totalPendientes}</p>
+          </div>
+
+          <!-- Búsqueda -->
+          <input type="text" id="buscador" placeholder="Buscar por cliente, número o OC..." 
+            class="w-full px-6 py-5 mb-6 bg-white/10 border border-white/20 rounded-3xl text-lg focus:ring-4 focus:ring-cyan-500/60"
+            oninput="filtrar()">
+
+          <!-- Lista -->
+          <div id="listaPedidos" class="space-y-6">
+            ${tarjetas}
+          </div>
+        </div>
+
+        <!-- Botón flotante nuevo -->
+        <button onclick="nuevoPedido()" 
+          class="fixed bottom-8 right-6 w-16 h-16 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full shadow-2xl flex items-center justify-center z-40 hover:scale-110 transition">
+          <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="4" d="M12 4v16m8-8H4"/>
+          </svg>
+        </button>
+
+        <!-- Modal Edición -->
+        <div id="modalEdicion" class="fixed inset-0 bg-black/90 hidden flex items-center justify-center z-50 p-6">
+          <div class="bg-slate-900 rounded-3xl p-8 max-w-2xl w-full shadow-2xl border border-white/20">
+            <h2 class="text-3xl font-black mb-8 text-center">Editar Pedido #<span id="editNumero"></span></h2>
+            <div class="space-y-6">
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="text-gray-400 text-sm">Unidades pendientes</label>
+                  <input type="number" id="editPendientes" class="w-full px-5 py-4 bg-white/10 border border-white/20 rounded-xl text-2xl text-center font-bold">
+                </div>
+                <div>
+                  <label class="text-gray-400 text-sm">Estado</label>
+                  <select id="editEstado" class="w-full px-5 py-4 bg-white/10 border border-white/20 rounded-xl text-lg">
+                    <option value="pendiente">Pendiente</option>
+                    <option value="entregado">Entregado</option>
+                    <option value="parcial">Parcial</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label class="text-gray-400 text-sm">Comentarios</label>
+                <textarea id="editComentarios" rows="3" class="w-full px-5 py-4 bg-white/10 border border-white/20 rounded-xl"></textarea>
+              </div>
+              <div class="flex gap-4">
+                <button onclick="guardarEdicion()" class="flex-1 py-5 bg-green-600 hover:bg-green-500 rounded-2xl font-black text-xl shadow-xl">
+                  Guardar Cambios
+                </button>
+                <button onclick="cerrarEdicion()" class="flex-1 py-5 bg-white/10 hover:bg-white/20 rounded-2xl font-bold">
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function filtrar() {
+      const filtro = document.getElementById('buscador').value.toLowerCase();
+      const tarjetas = document.querySelectorAll('#listaPedidos > div');
+      tarjetas.forEach(tarjeta => {
+        const texto = tarjeta.textContent.toLowerCase();
+        tarjeta.style.display = texto.includes(filtro) ? '' : 'none';
+      });
+    }
+
+    function nuevoPedido() {
+      alert('Próximamente: formulario completo para registrar nuevo pedido');
+    }
+
+    function editarPedido(p) {
+      pedidoEditando = p;
+      document.getElementById('editNumero').textContent = p.numero;
+      document.getElementById('editPendientes').value = p.unidades_pendientes;
+      document.getElementById('editEstado').value = p.estado.toLowerCase();
+      document.getElementById('editComentarios').value = p.comentarios;
+      document.getElementById('modalEdicion').classList.remove('hidden');
+    }
+
+    function cerrarEdicion() {
+      document.getElementById('modalEdicion').classList.add('hidden');
+      pedidoEditando = null;
+    }
+
+    async function guardarEdicion() {
+      if (!pedidoEditando) return;
+
+      const actualizado = {
+        ...pedidoEditando,
+        unidades_pendientes: parseInt(document.getElementById('editPendientes').value) || 0,
+        estado: document.getElementById('editEstado').value,
+        comentarios: document.getElementById('editComentarios').value.trim()
+      };
+
+      // Eliminar viejo y guardar nuevo
+      await fetch(`${SHEET_API}/numero/${pedidoEditando.numero}`, { method: 'DELETE' });
+      await fetch(SHEET_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: actualizado })
+      });
+
+      cerrarEdicion();
+      cargarPedidos();
+    }
+
+    cargarPedidos();
+  </script>
+</body>
+</html>

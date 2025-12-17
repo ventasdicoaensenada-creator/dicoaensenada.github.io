@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="es">
+  <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1a2744">
+  <link rel="apple-touch-icon" href="icon-192.png">
+<head>
+  <script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js');
+  }
+</script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bitácora DICOA</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%231a2744'/><text x='50' y='65' font-size='50' text-anchor='middle' fill='white'>D</text></svg>">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, sans-serif; }
+    .animate-spin { animation: spin 1s linear infinite; }
+    .animate-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    @keyframes pulse { 0%, 100% { opacity: 1; }  50% { opacity: .5; } }
+  </style>
+</head>
+<body>
+  <div id="app" class="min-h-screen" style="background-color: #1a2744;">
+    <div class="flex items-center justify-center min-h-screen">
+      <div class="text-white text-center">
+        <div class="w-12 h-12 border-4 border-white border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+        <p>Cargando bitácora...</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const CLIENTES_API = 'https://sheetdb.io/api/v1/m2kpg76ucwvd0?sheet=Clientes';
+    const BITACORA_API = 'https://sheetdb.io/api/v1/m2kpg76ucwvd0?sheet=Bitacora';
+
+    let clientes = [];
+    let registros = [];
+    let verHistorial = false;
+    let enviado = false;
+    let cargando = true;
+    let grabando = false;
+    let recognition = null;
+    let empresaSeleccionada = '';
+    let vendedorSeleccionado = '';
+    let textoAcumulado = '';
+
+    // === CARGAR CLIENTES (VERSIÓN CORREGIDA Y BLINDADA) ===
+async function cargarClientes() {
+  try {
+    const res = await fetch(CLIENTES_API);
+    if (!res.ok) throw new Error('Error en SheetDB');
+    const data = await res.json();
+
+    const empresasMap = new Map(); // Usamos Map para evitar duplicados y combinar usuarios
+
+    data.forEach(row => {
+      const nombre = (row.empresa || '').trim();
+      if (!nombre) return;
+
+      const usuariosStr = (row.usuarios || '').trim();
+      if (!usuariosStr) return;
+
+      // Separar usuarios y limpiar cada uno perfectamente
+      const usuarios = usuariosStr
+        .split(',')
+        .map(u => u.trim())
+        .filter(u => u.length > 0);
+
+      if (usuarios.length === 0) return;
+
+      // Si ya existe la empresa, combinar los usuarios (por si hay filas separadas)
+      if (empresasMap.has(nombre)) {
+        const existentes = empresasMap.get(nombre);
+        usuarios.forEach(u => {
+          if (!existentes.includes(u)) existentes.push(u);
+        });
+      } else {
+        empresasMap.set(nombre, usuarios);
+      }
+    });
+
+    // Convertir a array y ordenar
+    clientes = Array.from(empresasMap, ([empresa, usuarios]) => ({
+      empresa,
+      usuarios
+    })).sort((a, b) => a.empresa.localeCompare(b.empresa));
+
+    console.log('Empresas cargadas:', clientes); // Abre la consola (F12) para ver si todo está bien
+
+  } catch (err) {
+    console.error('Error cargando clientes:', err);
+    alert('Error cargando empresas');
+  }
+}
+
+// === OBTENER USUARIOS (mejorada) ===
+function getUsuariosDeEmpresa(nombre) {
+  const cliente = clientes.find(c => c.empresa === nombre);
+  return cliente ? cliente.usuarios : [];
+}
+
+    // === RECONOCIMIENTO DE VOZ ===
+    function iniciarReconocimientoVoz() {
+      if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+        alert('Tu navegador no soporta dictado por voz. Usa Chrome/Edge.');
+        return;
+      }
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SpeechRecognition();
+      recognition.lang = 'es-MX';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+
+      textoAcumulado = document.getElementById('comentarios').value || '';
+      if (textoAcumulado && !textoAcumulado.endsWith(' ')) textoAcumulado += ' ';
+
+      recognition.onresult = (e) => {
+        let final = textoAcumulado;
+        let temporal = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          if (e.results[i].isFinal) {
+            final += e.results[i][0].transcript + ' ';
+          } else {
+            temporal += e.results[i][0].transcript;
+          }
+        }
+        document.getElementById('comentarios').value = final + temporal;
+      };
+
+      recognition.onerror = () => detenerGrabacion();
+      recognition.onend = () => { if (grabando) recognition.start(); };
+
+      recognition.start();
+      grabando = true;
+      render();
+    }
+
+    function detenerGrabacion() {
+      grabando = false;
+      if (recognition) recognition.stop();
+      textoAcumulado = document.getElementById('comentarios').value || '';
+      render();
+    }
+
+    function toggleGrabacion() {
+      grabando ? detenerGrabacion() : iniciarReconocimientoVoz();
+    }
+
+    // === CARGAR REGISTROS BITÁCORA ===
+    async function cargarRegistros() {
+      try {
+        const res = await fetch(BITACORA_API);
+        if (!res.ok) throw new Error('Error en SheetDB Bitacora');
+        const data = await res.json();
+        registros = data.map(r => ({
+          ...r,
+          fechaFormato: formatearFecha(r.fecha)
+        }));
+      } catch (err) {
+        console.error('Error bitácora:', err);
+        registros = [];
+      }
+      cargando = false;
+      render();
+    }
+
+    async function guardarEnSheets(registro) {
+      try {
+        const res = await fetch(BITACORA_API, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: registro })
+        });
+        return res.ok;
+      } catch (err) {
+        console.error(err);
+        return false;
+      }
+    }
+
+    async function eliminarRegistro(fecha, hora) {
+      if (!confirm('¿Eliminar este registro?')) return;
+      const ok = await fetch(`${BITACORA_API}/fecha/${fecha}/hora/${hora}`, { method: 'DELETE' }).then(r => r.ok);
+      if (ok) cargarRegistros();
+      else alert('Error al eliminar');
+    }
+
+    function getFechaHoy() {
+      const hoy = new Date();
+      return hoy.toLocaleDateString('es-MX');
+    }
+
+    function getHoraAhora() {
+      return new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+    }
+
+    function formatearFecha(f) {
+      if (!f) return '';
+      if (f.includes('/')) return f;
+      return new Date(f).toLocaleDateString('es-MX');
+    }
+
+    function exportarCSV() {
+      if (!registros.length) return;
+      const headers = ['Fecha', 'Hora', 'Empresa', 'Contacto', 'Comentarios'];
+      const rows = registros.map(r => [
+        r.fechaFormato,
+        r.hora,
+        r.empresa,
+        r.contacto || '',
+        `"${(r.comentarios || '').replace(/"/g, '""')}"`
+      ]);
+      const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Bitacora_DICOA_${getFechaHoy().replace(/\//g, '-')}.csv`;
+      a.click();
+    }
+
+    function cambiarEmpresa(valor) {
+      empresaSeleccionada = valor;
+      render(); // render() ahora va a restaurar el vendedor automáticamente
+    }
+
+    async function registrarVisita() {
+  const empresa = document.getElementById('empresa').value;
+  const contacto = document.getElementById('contacto')?.value || '';
+  const comentarios = document.getElementById('comentarios').value.trim();
+  const vendedor = document.getElementById('vendedor').value;
+
+  if (!empresa || !comentarios || !vendedor) {
+    alert('Por favor completa: Vendedor, Empresa y Comentarios');
+    return;
+  }
+
+  // GUARDAR EL VENDEDOR SELECCIONADO (para que no se pierda nunca)
+  vendedorSeleccionado = vendedor;
+
+  const exito = await guardarEnSheets({
+    fecha: getFechaHoy(),
+    hora: getHoraAhora(),
+    empresa,
+    contacto: contacto || 'Sin contacto',
+    comentarios,
+    vendedor
+  });
+
+  if (exito) {
+    document.getElementById('comentarios').value = '';
+    empresaSeleccionada = '';
+    // NO borramos vendedorSeleccionado → queda para la próxima visita
+    enviado = true;
+    render();
+    setTimeout(() => { enviado = false; cargarRegistros(); }, 2000);
+  }
+}
+
+    // === RENDER COMPLETO ===
+    function render() {
+      if (cargando) return;
+
+      const opcionesEmpresas = clientes.length === 0
+        ? '<option>Cargando empresas...</option>'
+        : '<option value="">Selecciona una empresa...</option>' +
+          clientes.map(c => `<option value="${c.empresa}">${c.empresa}</option>`).join('');
+
+      const usuarios = empresaSeleccionada ? getUsuariosDeEmpresa(empresaSeleccionada) : [];
+      const opcionesContactos = usuarios.length
+        ? usuarios.map(u => `<option value="${u}">${u}</option>`).join('')
+        : '<option>No hay contactos</option>';
+
+const formularioHTML = enviado
+  ? `<div class="text-center py-12">
+      <div class="w-20 h-20 mx-auto bg-green-600 rounded-full flex items-center justify-center">
+        <svg class="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+        </svg>
+      </div>
+      <p class="text-2xl font-bold mt-4 text-gray-800">¡Guardado con éxito!</p>
+      <p class="text-sm text-gray-600">Registro de actividades en campo</p>
+    </div>`
+  : `<div class="space-y-5">
+
+      <!-- VENDEDOR (NUEVO) -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-2">Vendedor</label>
+        <select id="vendedor" class="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-blue-900 bg-gray-50 font-medium">
+          <option value="">Selecciona vendedor...</option>
+          <option value="Jesus" ${vendedorSeleccionado === 'Jesus' ? 'selected' : ''}>Jesus</option>
+          <option value="Ezau" ${vendedorSeleccionado === 'Ezau' ? 'selected' : ''}>Ezau</option>
+            <!-- Agrega más aquí si quieres -->
+        </select>
+      </div>
+
+      <!-- EMPRESA -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-2">Empresa</label>
+        <select id="empresa" onchange="cambiarEmpresa(this.value)" class="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-blue-900 bg-gray-50">
+          ${opcionesEmpresas}
+        </select>
+      </div>
+
+      <!-- CONTACTO (aparece solo si la empresa tiene usuarios) -->
+      ${empresaSeleccionada && usuarios.length ? `
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">Contacto</label>
+          <select id="contacto" class="w-full px-4 py-3 rounded-xl border-2 border-gray-200 focus:border-blue-900 bg-gray-50">
+            <option value="">Sin contacto específico</option>
+            ${opcionesContactos}
+          </select>
+        </div>` : ''}
+
+      <!-- FECHA Y HORA -->
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">Fecha</label>
+          <div class="px-4 py-3 bg-gray-100 rounded-xl border-2 border-gray-200 text-sm font-medium">${getFechaHoy()}</div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-2">Hora</label>
+          <div class="px-4 py-3 bg-gray-100 rounded-xl border-2 border-gray-200 text-sm font-medium">${getHoraAhora()}</div>
+        </div>
+      </div>
+
+      <!-- COMENTARIOS + MICRÓFONO -->
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-2">Comentarios / Solicitudes</label>
+        <div class="relative">
+          <textarea id="comentarios" placeholder="Describe lo hablado o dicta con el micrófono..." rows="5" 
+                    class="w-full px-4 py-3 pr-14 rounded-xl border-2 border-gray-200 focus:border-blue-900 resize-none bg-gray-50"></textarea>
+          <button onclick="toggleGrabacion()" 
+                  class="absolute right-3 top-3 p-3 rounded-lg transition-all ${grabando ? 'bg-red-600 text-white animate-pulse' : 'bg-blue-100 text-blue-700 hover:bg-blue-200'}">
+           ${grabando ? 
+                    '<svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>' :
+                    '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" /></svg>'
+                  }
+                </button>
+              </div>
+              ${grabando ? '<p class="text-xs text-red-500 mt-1 animate-pulse">🔴 Grabando... habla ahora</p>' : '<p class="text-xs text-gray-400 mt-1">💡 Toca el micrófono para dictar por voz</p>'}
+            </div>
+
+      <!-- BOTÓN REGISTRAR -->
+      <button onclick="registrarVisita()" 
+              class="w-full py-5 bg-[#1a2744] hover:bg-[#0f172a] text-white font-bold rounded-xl text-lg transition transform hover:scale-105 shadow-lg">
+        Registrar Visita
+      </button>
+    </div>`;
+
+      const historialHTML = registros.length === 0
+        ? '<p class="text-center text-gray-500 py-10">No hay registros aún</p>'
+        : `<div class="space-y-4 max-h-96 overflow-y-auto">
+            ${registros.slice().reverse().map(r => `
+              <div class="bg-gray-50 p-4 rounded-xl border">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <p class="font-bold text-gray-800">${r.empresa}</p>
+                    ${r.contacto && r.contacto !== 'Sin contacto' ? `<p class="text-sm text-blue-700">Contacto: ${r.contacto}</p>` : ''}
+                    ${r.vendedor && r.vendedor !== 'Sin vendedor' ? `<p class="text-sm text-gray-400">Contacto: ${r.vendedor}</p>` : ''}
+                  </div>
+                  <button onclick="eliminarRegistro('${r.fecha}','${r.hora}')" class="text-red-500">Delete</button>
+                </div>
+                <p class="text-gray-700 mt-2">${r.comentarios}</p>
+                <p class="text-xs text-gray-500 mt-2">${r.fechaFormato} - ${r.hora}</p>
+              </div>
+            `).join('')}
+          </div>`;
+
+      document.getElementById('app').innerHTML = `
+         <div class="pt-4 pb-6 px-4">
+          <div class="max-w-md mx-auto">
+            <!-- Botón Regresar -->
+              <a href="index.html" class="inline-flex items-center gap-2 text-white hover:bg-white/20 px-3 py-2 rounded-lg mb-4 transition-colors">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+                </svg>
+                <span class="text-sm">Volver al menú</span>
+            </a>
+              <!-- Logo existente -->
+            <div class="text-center">
+              <img src="logo-dicoa.png" alt="DICOA" class="h-20 w-auto mx-auto mb-4" onerror="this.style.display='none'">
+            </div>
+          </div>
+        </div>
+
+        <div class="px-4 pb-10">
+          <div class="max-w-md mx-auto bg-white rounded-2xl shadow-2xl overflow-hidden">
+            <div class="flex border-b">
+              <button onclick="verHistorial=false;render()" class="flex-1 py-4 font-bold ${!verHistorial ? 'text-blue-900 border-b-4 border-blue-900' : 'text-gray-500'}">Nueva Visita</button>
+              <button onclick="verHistorial=true;render()" class="flex-1 py-4 font-bold ${verHistorial ? 'text-blue-900 border-b-4 border-blue-900' : 'text-gray-500'}">
+                Historial (${registros.length})
+              </button>
+            </div>
+
+            <div class="p-6">
+              ${verHistorial ? `
+                <div class="flex justify-between items-center mb-4">
+                  <h2 class="text-xl font-bold">Historial de visitas</h2>
+                  ${registros.length ? '<button onclick="exportarCSV()" class="text-green-600 font-bold text-sm">Exportar CSV</button>' : ''}
+                </div>
+                ${historialHTML}
+              ` : `
+                <h2 class="text-xl font-bold mb-2">Registrar visita</h2>
+                <p class="text-sm text-gray-600 mb-6">Registro de actividades en campo</p>
+                ${formularioHTML}
+              `}
+            </div>
+          </div>
+        </div>
+
+        <div class="text-center pb-6 text-xs text-gray-400">
+          © DICOA Automatización • ${clientes.length} Empresas activas
+        </div>
+      `;
+
+     // Restaurar selecciones después de dibujar
+      if (document.getElementById('empresa')) {
+          document.getElementById('empresa').value = empresaSeleccionada;
+      }
+      if (document.getElementById('vendedor') && vendedorSeleccionado) {
+          document.getElementById('vendedor').value = vendedorSeleccionado;
+}
+    }
+
+    // === INICIAR ===
+    async function iniciar() {
+      await cargarClientes();
+      await cargarRegistros();
+    }
+    iniciar();
+  </script>
+</body>
+</html>

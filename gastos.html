@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+  <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1a2744">
+  <link rel="apple-touch-icon" href="icon-192.png">
+<html lang="es" class="h-full">
+<head>
+  <script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js');
+  }
+</script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gastos - DICOA</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%231a2744'/><text x='50' y='65' font-size='50' text-anchor='middle' fill='white'>D</text></svg>">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; background-color: #1a2744; min-height: 100vh; }
+    .spinner { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body class="min-h-screen text-white">
+
+  <div id="app" class="pb-32">
+    <div class="flex items-center justify-center min-h-screen">
+      <div class="text-center">
+        <div class="w-16 h-16 border-4 border-white border-t-transparent rounded-full spinner mx-auto mb-6"></div>
+        <p class="text-xl">Cargando gastos...</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SHEET_API = 'https://sheetdb.io/api/v1/m2kpg76ucwvd0?sheet=Gastos';
+    let gastos = [];
+    let filtroMes = new Date().toISOString().slice(0, 7); // Mes actual por defecto
+
+    async function cargarGastos() {
+      try {
+        const res = await fetch(SHEET_API);
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+
+        gastos = data.map(g => ({
+          id: g.id || Date.now(),
+          fecha: g.fecha || '',
+          concepto: g.concepto || '',
+          categoria: g.categoria || 'Otros',
+          monto: parseFloat(g.monto) || 0
+        })).sort((a, b) => b.fecha.localeCompare(a.fecha));
+
+        render();
+      } catch (err) {
+        document.getElementById('app').innerHTML = `
+          <div class="flex items-center justify-center min-h-screen text-center px-6">
+            <div>
+              <p class="text-red-400 text-xl mb-6">Error de conexión</p>
+              <button onclick="cargarGastos()" class="w-full py-5 bg-cyan-600 hover:bg-cyan-500 rounded-2xl font-black text-lg">
+                Reintentar
+              </button>
+            </div>
+          </div>`;
+      }
+    }
+
+    function render() {
+      const gastosFiltrados = gastos.filter(g => g.fecha.startsWith(filtroMes));
+
+      const totalMes = gastosFiltrados.reduce((s, g) => s + g.monto, 0);
+      const totalGeneral = gastos.reduce((s, g) => s + g.monto, 0);
+
+      const porCategoria = {};
+      gastosFiltrados.forEach(g => {
+        porCategoria[g.categoria] = (porCategoria[g.categoria] || 0) + g.monto;
+      });
+
+      const tarjetasGastos = gastosFiltrados.length === 0
+        ? `<div class="text-center py-20 text-gray-400 text-xl">No hay gastos este mes</div>`
+        : gastosFiltrados.map(g => `
+          <div class="bg-white/10 rounded-3xl p-6 border border-white/10 shadow-xl hover:border-cyan-500/50 transition">
+            <div class="flex justify-between items-start mb-4">
+              <div>
+                <h3 class="text-2xl font-black mb-1">${g.concepto}</h3>
+                <p class="text-cyan-300 text-lg">${g.categoria}</p>
+              </div>
+              <button onclick="eliminar(${g.id})" class="text-red-400 hover:text-red-300">
+                <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+                </svg>
+              </button>
+            </div>
+            <div class="flex justify-between items-end">
+              <p class="text-gray-400">${g.fecha}</p>
+              <p class="text-3xl font-black text-green-400">$${g.monto.toFixed(2)}</p>
+            </div>
+          </div>
+        `).join('');
+
+      const tarjetasCategorias = Object.entries(porCategoria).length === 0
+        ? ''
+        : Object.entries(porCategoria).map(([cat, monto]) => `
+          <div class="bg-white/10 rounded-2xl p-5 text-center border border-white/10">
+            <p class="text-gray-400 text-sm mb-2">${cat}</p>
+            <p class="text-3xl font-black text-green-400">$${monto.toFixed(2)}</p>
+          </div>
+        `).join('');
+
+      document.getElementById('app').innerHTML = `
+        <!-- Header fijo -->
+        <div class="fixed top-0 left-0 right-0 bg-slate-900/95 backdrop-blur-xl border-b border-white/10 z-50">
+          <div class="p-4 flex items-center justify-between">
+            <a href="index.html" class="flex items-center gap-3">
+              <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M15 19l-7-7 7-7"/>
+              </svg>
+            </a>
+            <h1 class="text-2xl font-black">Gastos Oficina</h1>
+            <div class="text-cyan-300 font-bold">${gastos.length}</div>
+          </div>
+        </div>
+
+        <div class="pt-24 px-4">
+          <!-- Selector de mes -->
+          <div class="mb-6">
+            <input type="month" id="filtroMes" value="${filtroMes}" 
+              class="w-full px-6 py-5 bg-white/10 border border-white/20 rounded-3xl text-lg text-center"
+              onchange="filtroMes = this.value; cargarGastos()">
+          </div>
+
+          <!-- Resumen mensual -->
+          <div class="bg-gradient-to-r from-green-600/20 to-emerald-600/20 rounded-3xl p-8 mb-8 border border-green-500/30 text-center">
+            <p class="text-gray-300 text-lg mb-2">Total del mes</p>
+            <p class="text-6xl font-black text-green-400">$${totalMes.toFixed(2)}</p>
+            <p class="text-gray-400 mt-4">Total general: $${totalGeneral.toFixed(2)}</p>
+          </div>
+
+          <!-- Por categoría -->
+          ${tarjetasCategorias ? `
+            <div class="mb-8">
+              <h2 class="text-2xl font-black mb-6 text-center">Por Categoría</h2>
+              <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                ${tarjetasCategorias}
+              </div>
+            </div>
+          ` : ''}
+
+          <!-- Lista de gastos -->
+          <h2 class="text-2xl font-black mb-6 text-center">Registro de Gastos</h2>
+          <div class="space-y-5">
+            ${tarjetasGastos}
+          </div>
+
+          <!-- Exportar -->
+          ${gastosFiltrados.length > 0 ? `
+            <div class="mt-10 text-center">
+              <button onclick="exportarCSV()" class="px-8 py-5 bg-green-600 hover:bg-green-500 rounded-3xl font-black text-xl shadow-2xl">
+                Exportar este mes a CSV
+              </button>
+            </div>
+          ` : ''}
+        </div>
+
+        <!-- Botón flotante + Nuevo gasto -->
+        <button onclick="nuevoGasto()" 
+          class="fixed bottom-8 right-6 w-16 h-16 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-full shadow-2xl flex items-center justify-center z-40 hover:scale-110 transition">
+          <svg class="w-10 h-10" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="4" d="M12 4v16m8-8H4"/>
+          </svg>
+        </button>
+      `;
+    }
+
+    function nuevoGasto() {
+      const fecha = prompt('Fecha (YYYY-MM-DD):', new Date().toISOString().split('T')[0]);
+      const concepto = prompt('Concepto:');
+      const categoria = prompt('Categoría (Material de oficina, Cafetería, Limpieza, Servicios, Mantenimiento, Tecnología, Otros):', 'Otros');
+      const montoStr = prompt('Monto:');
+
+      if (!concepto || !montoStr) return alert('Completa concepto y monto');
+
+      const monto = parseFloat(montoStr);
+      if (isNaN(monto) || monto <= 0) return alert('Monto inválido');
+
+      fetch(SHEET_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { fecha, concepto, categoria, monto } })
+      }).then(() => cargarGastos());
+    }
+
+    async function eliminar(id) {
+      if (!confirm('¿Eliminar este gasto?')) return;
+      await fetch(`${SHEET_API}/id/${id}`, { method: 'DELETE' });
+      cargarGastos();
+    }
+
+   function exportarCSV() {
+  const filtrados = gastos.filter(g => g.fecha.startsWith(filtroMes));
+
+  if (filtrados.length === 0) {
+    alert('No hay gastos para exportar en este mes');
+    return;
+  }
+
+  // Ordenar por fecha descendente
+  filtrados.sort((a, b) => b.fecha.localeCompare(a.fecha));
+
+  // Formatear fecha a dd/mm/aaaa
+  const formatearFecha = (fecha) => {
+    if (!fecha) return '';
+    const [a, m, d] = fecha.split('-');
+    return `${d}/${m}/${a}`;
+  };
+
+  // Formatear monto con separador de miles
+  const formatearMonto = (monto) => {
+    return monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  // Calcular total
+  const total = filtrados.reduce((sum, g) => sum + g.monto, 0);
+
+  // Encabezados profesionales
+  const headers = ['FECHA', 'CONCEPTO', 'CATEGORÍA', 'MONTO (MXN)'];
+
+  // Filas de datos
+  const rows = filtrados.map(g => [
+    formatearFecha(g.fecha),
+    g.concepto.toUpperCase(),
+    g.categoria.toUpperCase(),
+    formatearMonto(g.monto)
+  ]);
+
+  // Fila de total
+  const filaTotal = ['', 'TOTAL DEL MES', '', formatearMonto(total)];
+
+  // Construir CSV
+  const contenido = [
+    ['REPORTE DE GASTOS OFICINA - DICOA AUTOMATIZACIÓN'],
+    [`MES: ${filtroMes.replace('-', ' / ')}`],
+    [''], // línea en blanco
+    headers,
+    ...rows,
+    [''], // línea en blanco
+    filaTotal
+  ].map(row => row.join(',')).join('\n');
+
+  // Descargar
+  const blob = new Blob(['\ufeff' + contenido], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+
+  const mesNombre = new Date(filtroMes + '-01').toLocaleDateString('es-MX', { month: 'long', year: 'numeric' });
+  link.download = `Reporte_Gastos_Oficina_${mesNombre.charAt(0).toUpperCase() + mesNombre.slice(1)}.csv`;
+
+  link.href = url;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+    cargarGastos();
+  </script>
+</body>
+</html>

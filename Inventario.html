@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="es" class="h-full">
+  <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1a2744">
+  <link rel="apple-touch-icon" href="icon-192.png">
+<head>
+  <script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js');
+  }
+</script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inventario - DICOA</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='45' fill='%231a2744'/><text x='50' y='65' font-size='50' text-anchor='middle' fill='white'>D</text></svg>">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; background-color: #1a2744; min-height: 100vh; }
+    .spinner { animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .hover-row:hover { background: rgba(255,255,255,0.08) !important; }
+  </style>
+</head>
+<body class="min-h-screen text-white">
+
+  <div id="app">
+    <div class="flex items-center justify-center min-h-screen">
+      <div class="text-center">
+        <div class="w-12 h-12 border-4 border-white border-t-transparent rounded-full spinner mx-auto mb-4"></div>
+        <p class="text-lg">Cargando inventario...</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SHEET_API = 'https://sheetdb.io/api/v1/m2kpg76ucwvd0?sheet=Inventario';
+    let inventario = [];
+
+    async function cargarInventario() {
+      try {
+        const res = await fetch(SHEET_API);
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+
+        inventario = data.map(p => ({
+          nombre: p.nombre || '',
+          numero_parte: p.numero_parte || '',
+          cantidad: parseInt(p.cantidad) || 0,
+          cantidad_sistema: parseInt(p.cantidad_sistema) || 0
+        }));
+
+        render();
+      } catch (err) {
+        document.getElementById('app').innerHTML = `
+          <div class="flex items-center justify-center min-h-screen text-center">
+            <p class="text-red-400 text-xl mb-6">Error de conexión con Google Sheets</p>
+            <button onclick="cargarInventario()" class="px-8 py-4 bg-cyan-600 hover:bg-cyan-500 rounded-xl font-bold text-lg">
+              Reintentar
+            </button>
+          </div>`;
+      }
+    }
+
+    function render() {
+      document.getElementById('app').innerHTML = '';
+
+      const filas = inventario.length === 0
+        ? `<tr><td colspan="5" class="text-center py-20 text-gray-400 text-xl">No hay productos en inventario</td></tr>`
+        : inventario.map(p => {
+            const esDiferente = p.cantidad !== p.cantidad_sistema;
+            const colorStock = esDiferente ? 'text-red-500' : 'text-white';
+            const grosorStock = esDiferente ? 'font-black' : 'font-bold';
+
+            return `
+              <tr class="hover-row border-b border-white/10">
+                <td class="py-5 px-6 font-bold text-lg">${p.nombre || '-'}</td>
+                <td class="py-5 px-6 font-mono text-cyan-300 text-lg">${p.numero_parte || '-'}</td>
+                <td class="py-5 px-6 text-center">
+                  <span class="text-4xl ${grosorStock} ${colorStock}">${p.cantidad}</span>
+                  ${esDiferente ? '<br><span class="text-xs text-red-400 mt-1 block">¡Diferente al sistema!</span>' : ''}
+                </td>
+                <td class="py-5 px-6 text-center text-2xl font-bold text-gray-300">${p.cantidad_sistema}</td>
+                <td class="py-5 px-6 text-center">
+                  <button onclick='abrirAjuste(${JSON.stringify(p).replace(/'/g, "&#39;")})' 
+                    class="px-6 py-3 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 rounded-xl font-bold shadow-lg transform hover:scale-105 transition">
+                    Ajustar Stock
+                  </button>
+                </td>
+              </tr>
+            `;
+          }).join('');
+
+      document.getElementById('app').innerHTML = `
+        <div class="pt-6 pb-8 px-6 border-b border-white/10">
+          <div class="max-w-6xl mx-auto flex items-center justify-between">
+            <a href="index.html" class="flex items-center gap-4 text-white hover:bg-white/10 px-5 py-3 rounded-xl transition">
+              <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+              <span class="font-bold text-lg">Volver</span>
+            </a>
+            <h1 class="text-4xl font-black">Inventario DICOA</h1>
+            <div class="text-cyan-300 font-bold text-xl">${inventario.length} productos</div>
+          </div>
+        </div>
+
+        <div class="px-6 py-10">
+          <div class="max-w-6xl mx-auto space-y-8">
+            <div class="flex flex-col sm:flex-row gap-4">
+              <input type="text" id="buscador" placeholder="Buscar producto o número de parte..." 
+                class="flex-1 px-6 py-5 bg-white/10 border border-white/20 rounded-2xl focus:outline-none focus:ring-4 focus:ring-cyan-500/60 text-lg"
+                oninput="filtrar()">
+              <button onclick="nuevoProducto()" 
+                class="px-10 py-5 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 rounded-2xl font-black text-xl shadow-2xl transition transform hover:scale-105">
+                + Nuevo Producto
+              </button>
+            </div>
+
+            <div class="bg-white/10 backdrop-blur-xl rounded-3xl overflow-hidden border border-white/20 shadow-2xl">
+              <table class="w-full">
+                <thead class="bg-white/5">
+                  <tr>
+                    <th class="text-left py-6 px-6 font-black text-cyan-300">Producto</th>
+                    <th class="text-left py-6 px-6 font-black text-cyan-300">N° Parte</th>
+                    <th class="text-center py-6 px-6 font-black text-cyan-300">Stock Físico</th>
+                    <th class="text-center py-6 px-6 font-black text-cyan-300">Stock Sistema</th>
+                    <th class="text-center py-6 px-6 font-black text-cyan-300">Acción</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-white/10">
+                  ${filas}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Modal Nuevo/Editar -->
+        <div id="modal" class="fixed inset-0 bg-black/80 hidden flex items-center justify-center z-50 p-4">
+          <div class="bg-slate-900 rounded-3xl p-10 max-w-xl w-full shadow-2xl border border-white/20">
+            <h2 class="text-4xl font-black mb-10 text-center" id="modalTitulo">Nuevo Producto</h2>
+            <div class="space-y-8">
+              <input type="text" id="nombre" placeholder="Nombre del producto" class="w-full px-6 py-5 bg-white/10 border border-white/20 rounded-xl focus:outline-none focus:ring-4 focus:ring-cyan-500/60 text-lg">
+              <input type="text" id="numeroParte" placeholder="Número de parte" class="w-full px-6 py-5 bg-white/10 border border-white/20 rounded-xl focus:outline-none focus:ring-4 focus:ring-cyan-500/60 text-lg">
+              <div class="grid grid-cols-2 gap-6">
+                <div>
+                  <label class="block text-sm text-gray-400 mb-2">Cantidad Física</label>
+                  <input type="number" id="cantidad" value="0" class="w-full px-6 py-5 bg-white/10 border border-white/20 rounded-xl text-center font-bold text-lg">
+                </div>
+                <div>
+                  <label class="block text-sm text-gray-400 mb-2">Cantidad Sistema</label>
+                  <input type="number" id="cantidadSistema" value="0" class="w-full px-6 py-5 bg-white/10 border border-white/20 rounded-xl text-center font-bold text-lg">
+                </div>
+              </div>
+              <div class="flex gap-6">
+                <button onclick="guardar()" class="flex-1 py-5 bg-gradient-to-r from-cyan-600 to-blue-700 hover:from-cyan-500 hover:to-blue-600 rounded-xl font-black text-xl shadow-xl transition transform hover:scale-105">
+                  Guardar
+                </button>
+                <button onclick="cerrarModal()" class="flex-1 py-5 bg-white/10 hover:bg-white/20 rounded-xl font-bold">
+                  Cancelar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Modal Ajuste Rápido -->
+        <div id="modalAjuste" class="fixed inset-0 bg-black/80 hidden flex items-center justify-center z-50 p-4">
+          <div class="bg-slate-900 rounded-3xl p-10 max-w-md w-full shadow-2xl border border-white/20 text-center">
+            <h3 class="text-3xl font-black mb-6" id="nombreAjuste">Producto</h3>
+            <p class="text-5xl font-black mb-8 text-cyan-300" id="cantidadActual">0</p>
+            <div class="grid grid-cols-3 gap-4 mb-8">
+              <button onclick="ajustar(-10)" class="py-8 bg-red-600 hover:bg-red-500 rounded-2xl text-4xl font-black">-10</button>
+              <button onclick="ajustar(-1)" class="py-8 bg-red-600 hover:bg-red-500 rounded-2xl text-4xl font-black">-1</button>
+              <button onclick="ajustar(1)" class="py-8 bg-green-600 hover:bg-green-500 rounded-2xl text-4xl font-black">+1</button>
+            </div>
+            <button onclick="cerrarAjuste()" class="w-full py-5 bg-white/20 hover:bg-white/30 rounded-xl font-bold text-xl">
+              Cerrar
+            </button>
+          </div>
+        </div>
+        </div>
+      `;
+    }
+
+    function filtrar() {
+      const filtro = (document.getElementById('buscador')?.value || '').toLowerCase();
+      const filas = document.querySelectorAll('tbody tr');
+      filas.forEach(fila => {
+        const texto = fila.textContent.toLowerCase();
+        fila.style.display = texto.includes(filtro) ? '' : 'none';
+      });
+    }
+
+    let productoEditando = null;
+
+    function nuevoProducto() {
+      productoEditando = null;
+      document.getElementById('modalTitulo').textContent = 'Nuevo Producto';
+      document.getElementById('nombre').value = '';
+      document.getElementById('numeroParte').value = '';
+      document.getElementById('cantidad').value = '0';
+      document.getElementById('cantidadSistema').value = '0';
+      document.getElementById('modal').classList.remove('hidden');
+    }
+
+    function guardar() {
+      const producto = {
+        nombre: document.getElementById('nombre').value.trim(),
+        numero_parte: document.getElementById('numeroParte').value.trim(),
+        cantidad: parseInt(document.getElementById('cantidad').value) || 0,
+        cantidad_sistema: parseInt(document.getElementById('cantidadSistema').value) || 0
+      };
+
+      if (!producto.nombre || !producto.numero_parte) {
+        alert('Nombre y número de parte son obligatorios');
+        return;
+      }
+
+      if (productoEditando) {
+        fetch(`${SHEET_API}/numero_parte/${encodeURIComponent(productoEditando.numero_parte)}`, { method: 'DELETE' });
+      }
+
+      fetch(SHEET_API, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: producto })
+      }).then(() => {
+        cerrarModal();
+        cargarInventario();
+      }).catch(() => alert('Error al guardar'));
+    }
+
+    function cerrarModal() {
+      document.getElementById('modal').classList.add('hidden');
+    }
+
+    let productoAjuste = null;
+
+    function abrirAjuste(p) {
+      productoAjuste = p;
+      document.getElementById('nombreAjuste').textContent = p.nombre;
+      document.getElementById('cantidadActual').textContent = p.cantidad;
+      document.getElementById('modalAjuste').classList.remove('hidden');
+    }
+
+    function ajustar(cantidad) {
+      if (!productoAjuste) return;
+      const nueva = productoAjuste.cantidad + cantidad;
+      if (nueva < 0) {
+        alert('No puedes tener cantidad negativa');
+        return;
+      }
+
+      fetch(`${SHEET_API}/numero_parte/${encodeURIComponent(productoAjuste.numero_parte)}`, { method: 'DELETE' })
+        .then(() => {
+          fetch(SHEET_API, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: { ...productoAjuste, cantidad: nueva } })
+          })
+        })
+        .then(() => {
+          cargarInventario();
+          cerrarAjuste();
+        })
+        .catch(() => alert('Error al ajustar'));
+    }
+
+    function cerrarAjuste() {
+      document.getElementById('modalAjuste').classList.add('hidden');
+    }
+
+    // INICIAR
+    cargarInventario();
+  </script>
+</body>
+</html>
